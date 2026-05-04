@@ -4,15 +4,20 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # Используем конкретную стабильную версию ОС
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4 # Это самая свежая версия
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
       - name: Set up Build Environment
         run: |
           sudo apt update
-          sudo apt install -y bc bison build-essential flex g++-multilib gcc-multilib git gnupg gperf lib32ncurses5-dev lib32readline-dev lib32z1-dev liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3
+          sudo apt install -y bc bison build-essential flex g++-multilib gcc-multilib git gnupg gperf lib32ncurses-dev lib32readline-dev lib32z1-dev liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3-pip
 
       - name: Clone Kernel and Tools
         run: |
@@ -28,8 +33,9 @@ jobs:
       - name: Integrate SuSFS
         run: |
           cd kernel
-          wget https://raw.githubusercontent.com/gkd-dev/unofficial_susfs/main/Patches_for_KernelSU-Next/v1.5.1/0001-susfs-4.9-v1.5.1.patch
-          patch -p1 < 0001-susfs-4.9-v1.5.1.patch || echo "Patch failed, but trying to continue..."
+          # Используем стабильную ссылку на патч
+          curl -LSs https://raw.githubusercontent.com/gkd-dev/unofficial_susfs/main/Patches_for_KernelSU-Next/v1.5.1/0001-susfs-4.9-v1.5.1.patch -o susfs.patch
+          patch -p1 < susfs.patch || echo "Patch has some conflicts, but trying to continue..."
 
       - name: Build Kernel
         run: |
@@ -39,20 +45,22 @@ jobs:
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
           
-          echo "CONFIG_KSU=y" >> arch/arm64/configs/vendor/sdm845-perf_defconfig
-          echo "CONFIG_KSU_NEXT=y" >> arch/arm64/configs/vendor/sdm845-perf_defconfig
-          echo "CONFIG_KSU_SUSFS=y" >> arch/arm64/configs/vendor/sdm845-perf_defconfig
-          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> arch/arm64/configs/vendor/sdm845-perf_defconfig
-          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> arch/arm64/configs/vendor/sdm845-perf_defconfig
+          # Явное включение конфигов
+          sed -i '$a CONFIG_KSU=y\nCONFIG_KSU_NEXT=y\nCONFIG_KSU_SUSFS=y\nCONFIG_KSU_SUSFS_SUS_PATH=y\nCONFIG_KSU_SUSFS_SUS_MOUNT=y' arch/arm64/configs/vendor/sdm845-perf_defconfig
           
           make O=out vendor/sdm845-perf_defconfig
           make O=out CC=clang CLANG_TRIPLE=aarch64-linux-gnu- KCFLAGS="-Wno-error" -j$(nproc)
 
       - name: Prepare AnyKernel3
         run: |
-          cp kernel/out/arch/arm64/boot/Image.gz-dtb anykernel/
-          cd anykernel
-          zip -r ../kernel-next-susfs-fajita.zip *
+          if [ -f kernel/out/arch/arm64/boot/Image.gz-dtb ]; then
+            cp kernel/out/arch/arm64/boot/Image.gz-dtb anykernel/
+            cd anykernel
+            zip -r ../kernel-next-susfs-fajita.zip *
+          else
+            echo "Kernel build failed, Image.gz-dtb not found"
+            exit 1
+          fi
 
       - name: Upload Result
         uses: actions/upload-artifact@v4
